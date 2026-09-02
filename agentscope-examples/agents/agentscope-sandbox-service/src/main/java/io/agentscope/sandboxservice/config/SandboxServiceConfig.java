@@ -15,8 +15,11 @@
  */
 package io.agentscope.sandboxservice.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerSandboxClient;
 import io.agentscope.harness.agent.sandbox.snapshot.LocalSnapshotSpec;
+import io.agentscope.sandboxservice.service.FileSandboxStateRepository;
+import io.agentscope.sandboxservice.service.SandboxStateRepository;
 import java.io.IOException;
 import java.nio.file.Files;
 import org.springframework.context.annotation.Bean;
@@ -38,5 +41,13 @@ public class SandboxServiceConfig {
             throws IOException {
         Files.createDirectories(properties.getSnapshotDir().toAbsolutePath().normalize());
         return new LocalSnapshotSpec(properties.getSnapshotDir().toAbsolutePath().normalize());
+    }
+
+    /** 创建本地状态仓库，并确保状态目录存在。 */
+    @Bean
+    public SandboxStateRepository sandboxStateRepository(
+            SandboxServiceProperties properties, ObjectMapper objectMapper) {
+        return new FileSandboxStateRepository(
+                properties.getStateDir(), objectMapper.findAndRegisterModules());
     }
 }
