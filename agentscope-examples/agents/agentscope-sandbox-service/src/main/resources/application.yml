@@ -1,0 +1,14 @@
+server:
+  port: 8080
+
+sandbox-service:
+  state-dir: ${user.home}/.agentscope-sandbox-service/state
+  snapshot-dir: ${user.home}/.agentscope-sandbox-service/snapshots
+  docker:
+    image: ubuntu:24.04
+    workspace-root: /workspace
+    network: none
+    memory-size-bytes: 1073741824
+    cpu-count: 2
+  exec:
+    default-timeout-seconds: 120
