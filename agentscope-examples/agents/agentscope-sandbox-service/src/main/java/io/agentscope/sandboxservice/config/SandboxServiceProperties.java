@@ -16,8 +16,10 @@
 package io.agentscope.sandboxservice.config;
 
 import java.nio.file.Path;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /** 绑定 sandbox-service 配置，集中管理状态目录、快照目录和 Docker 默认参数。 */
+@ConfigurationProperties(prefix = "sandbox-service")
 public class SandboxServiceProperties {
 
     private Path stateDir =
