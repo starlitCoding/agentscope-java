@@ -19,6 +19,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerSandboxClient;
 import io.agentscope.harness.agent.sandbox.snapshot.LocalSnapshotSpec;
 import io.agentscope.sandboxservice.service.FileSandboxStateRepository;
+import io.agentscope.sandboxservice.service.HarnessSandboxFilesystemOperations;
+import io.agentscope.sandboxservice.service.SandboxFileToolService;
+import io.agentscope.sandboxservice.service.SandboxFilesystemOperations;
+import io.agentscope.sandboxservice.service.SandboxLifecycleService;
+import io.agentscope.sandboxservice.service.SandboxOperationLockRegistry;
 import io.agentscope.sandboxservice.service.SandboxStateRepository;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -49,5 +54,42 @@ public class SandboxServiceConfig {
             SandboxServiceProperties properties, ObjectMapper objectMapper) {
         return new FileSandboxStateRepository(
                 properties.getStateDir(), objectMapper.findAndRegisterModules());
+    }
+
+    /** 创建按业务键串行化操作互斥锁的注册表。 */
+    @Bean
+    public SandboxOperationLockRegistry sandboxOperationLockRegistry() {
+        return new SandboxOperationLockRegistry();
+    }
+
+    /** 创建沙箱生命周期服务，串起 Docker 客户端、快照策略、状态仓库和锁。 */
+    @Bean
+    public SandboxLifecycleService sandboxLifecycleService(
+            DockerSandboxClient dockerSandboxClient,
+            LocalSnapshotSpec localSnapshotSpec,
+            SandboxStateRepository sandboxStateRepository,
+            SandboxServiceProperties properties,
+            SandboxOperationLockRegistry sandboxOperationLockRegistry) {
+        return new SandboxLifecycleService(
+                dockerSandboxClient,
+                localSnapshotSpec,
+                sandboxStateRepository,
+                properties,
+                sandboxOperationLockRegistry);
+    }
+
+    /** 创建 Harness 文件系统操作适配器，绑定生命周期服务。 */
+    @Bean
+    public SandboxFilesystemOperations sandboxFilesystemOperations(
+            SandboxLifecycleService sandboxLifecycleService) {
+        return new HarnessSandboxFilesystemOperations(sandboxLifecycleService);
+    }
+
+    /** 创建文件工具服务，封装文件系统操作与路径校验。 */
+    @Bean
+    public SandboxFileToolService sandboxFileToolService(
+            SandboxFilesystemOperations sandboxFilesystemOperations,
+            SandboxServiceProperties properties) {
+        return new SandboxFileToolService(sandboxFilesystemOperations, properties);
     }
 }
