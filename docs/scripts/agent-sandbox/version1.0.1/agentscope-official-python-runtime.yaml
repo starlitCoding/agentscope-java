@@ -1,0 +1,141 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentscope-sandbox
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sandbox-router-auth
+  namespace: agentscope-sandbox
+type: Opaque
+stringData:
+  # 本地验证可先保留这个值；按生产标准使用时请替换成随机强 token。
+  auth-token: change-me-local-router-token
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: python-runtime-template
+  namespace: agentscope-sandbox
+spec:
+  service: true
+  podTemplate:
+    spec:
+      containers:
+        - name: python-runtime
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/python-runtime-sandbox:latest-main
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8888
+          env:
+            - name: SANDBOX_BASE_DIR
+              value: /workspace
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8888
+            initialDelaySeconds: 0
+            periodSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8888
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+              ephemeral-storage: 512Mi
+      restartPolicy: OnFailure
+      volumes:
+        - name: workspace
+          emptyDir: {}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: agentscope-sandbox
+  namespace: agentscope-sandbox
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: python-runtime-template
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-router-svc
+  namespace: agentscope-sandbox
+spec:
+  type: ClusterIP
+  selector:
+    app: sandbox-router
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-router-deployment
+  namespace: agentscope-sandbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-router
+  template:
+    metadata:
+      labels:
+        app: sandbox-router
+    spec:
+      containers:
+        - name: router
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/sandbox-router:latest-main
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PROXY_TIMEOUT_SECONDS
+              value: "180"
+            - name: WEBSOCKET_IDLE_TIMEOUT_SECONDS
+              value: "3600"
+            - name: WEBSOCKET_MAX_LIFETIME_SECONDS
+              value: "86400"
+            - name: WEBSOCKET_MAX_MESSAGE_BYTES
+              value: "16777216"
+            - name: WEBSOCKET_MAX_CONNECTIONS_PER_CLIENT
+              value: "0"
+            - name: ALLOW_UNAUTHENTICATED_ROUTER
+              value: "false"
+            - name: ROUTER_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-router-auth
+                  key: auth-token
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
