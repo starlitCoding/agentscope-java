@@ -15,18 +15,26 @@
  */
 package io.agentscope.sandboxservice.dto;
 
+import io.agentscope.sandboxservice.service.SandboxBackendType;
 import io.agentscope.sandboxservice.service.SandboxLifecycleStatus;
 import java.time.Instant;
+import java.util.Map;
 
-/** 返回沙箱生命周期状态和底层 Docker 运行信息。 */
+/** 返回沙箱生命周期状态和当前后端的运行时信息。 */
 public record SandboxStatusResponse(
         String userId,
         String sessionId,
+        SandboxBackendType backend,
         SandboxLifecycleStatus status,
         boolean running,
-        String containerId,
-        String containerName,
         boolean snapshotRestorable,
         String workspaceRoot,
+        Map<String, Object> runtime,
         Instant createdAt,
-        Instant updatedAt) {}
+        Instant updatedAt) {
+
+    /** 创建响应时复制运行时属性，避免响应对象被外部修改。 */
+    public SandboxStatusResponse {
+        runtime = runtime == null ? Map.of() : Map.copyOf(runtime);
+    }
+}

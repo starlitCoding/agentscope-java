@@ -15,6 +15,7 @@
  */
 package io.agentscope.sandboxservice.error;
 
+import io.agentscope.sandboxservice.service.SandboxBackendType;
 import io.agentscope.sandboxservice.service.SandboxKey;
 
 /** 沙箱服务业务异常，携带错误码、HTTP 状态和业务键，供统一异常处理返回。 */
@@ -28,7 +29,9 @@ public class SandboxServiceException extends RuntimeException {
         SANDBOX_EXEC_FAILED(500),
         SANDBOX_EXEC_TIMEOUT(504),
         FILE_OPERATION_FAILED(500),
-        STATE_STORE_FAILED(500);
+        STATE_STORE_FAILED(500),
+        BACKEND_MISMATCH(409),
+        UNSUPPORTED_BACKEND(500);
 
         private final int httpStatus;
 
@@ -117,5 +120,19 @@ public class SandboxServiceException extends RuntimeException {
     public static SandboxServiceException invalid(SandboxKey key, String message) {
         return new SandboxServiceException(
                 Code.INVALID_REQUEST, message, null, key.userId(), key.sessionId());
+    }
+
+    /** 构造状态文件后端与当前配置后端不一致时抛出的异常。 */
+    public static SandboxServiceException backendMismatch(
+            SandboxKey key, SandboxBackendType recordBackend, SandboxBackendType currentBackend) {
+        return new SandboxServiceException(
+                Code.BACKEND_MISMATCH,
+                "Sandbox backend mismatch",
+                "Persisted sandbox backend is "
+                        + recordBackend
+                        + " but current backend is "
+                        + currentBackend,
+                key.userId(),
+                key.sessionId());
     }
 }

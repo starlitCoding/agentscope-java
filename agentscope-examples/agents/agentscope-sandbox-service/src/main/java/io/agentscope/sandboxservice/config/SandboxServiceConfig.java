@@ -16,14 +16,22 @@
 package io.agentscope.sandboxservice.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.agentscope.extensions.sandbox.kubernetes.KubernetesHarnessSandboxJacksonModule;
+import io.agentscope.extensions.sandbox.kubernetes.KubernetesSandboxClient;
+import io.agentscope.extensions.sandbox.kubernetes.KubernetesSandboxClientOptions;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerSandboxClient;
+import io.agentscope.harness.agent.sandbox.json.HarnessSandboxJacksonModule;
 import io.agentscope.harness.agent.sandbox.snapshot.LocalSnapshotSpec;
+import io.agentscope.sandboxservice.service.DockerSandboxProvider;
 import io.agentscope.sandboxservice.service.FileSandboxStateRepository;
 import io.agentscope.sandboxservice.service.HarnessSandboxFilesystemOperations;
+import io.agentscope.sandboxservice.service.KubernetesSandboxProvider;
+import io.agentscope.sandboxservice.service.SandboxBackendType;
 import io.agentscope.sandboxservice.service.SandboxFileToolService;
 import io.agentscope.sandboxservice.service.SandboxFilesystemOperations;
 import io.agentscope.sandboxservice.service.SandboxLifecycleService;
 import io.agentscope.sandboxservice.service.SandboxOperationLockRegistry;
+import io.agentscope.sandboxservice.service.SandboxProvider;
 import io.agentscope.sandboxservice.service.SandboxStateRepository;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -36,8 +44,29 @@ public class SandboxServiceConfig {
 
     /** 创建 Docker 沙箱客户端。 */
     @Bean
-    public DockerSandboxClient dockerSandboxClient() {
-        return new DockerSandboxClient();
+    public DockerSandboxClient dockerSandboxClient(ObjectMapper objectMapper) {
+        return new DockerSandboxClient(sandboxObjectMapper(objectMapper));
+    }
+
+    /** 创建 Kubernetes 沙箱客户端，默认参数承载超时等全局配置。 */
+    @Bean
+    public KubernetesSandboxClient kubernetesSandboxClient(
+            SandboxServiceProperties properties, ObjectMapper objectMapper) {
+        return new KubernetesSandboxClient(
+                kubernetesOptions(properties.getKubernetes()), sandboxObjectMapper(objectMapper));
+    }
+
+    /** 根据配置选择实际沙箱后端。 */
+    @Bean
+    public SandboxProvider sandboxProvider(
+            DockerSandboxClient dockerSandboxClient,
+            KubernetesSandboxClient kubernetesSandboxClient,
+            SandboxServiceProperties properties) {
+        if (properties.getBackend() == SandboxBackendType.KUBERNETES) {
+            return new KubernetesSandboxProvider(
+                    kubernetesSandboxClient, properties.getKubernetes());
+        }
+        return new DockerSandboxProvider(dockerSandboxClient, properties.getDocker());
     }
 
     /** 创建本地快照策略，并确保快照目录存在。 */
@@ -53,7 +82,7 @@ public class SandboxServiceConfig {
     public SandboxStateRepository sandboxStateRepository(
             SandboxServiceProperties properties, ObjectMapper objectMapper) {
         return new FileSandboxStateRepository(
-                properties.getStateDir(), objectMapper.findAndRegisterModules());
+                properties.getStateDir(), objectMapper.copy().findAndRegisterModules());
     }
 
     /** 创建按业务键串行化操作互斥锁的注册表。 */
@@ -65,16 +94,14 @@ public class SandboxServiceConfig {
     /** 创建沙箱生命周期服务，串起 Docker 客户端、快照策略、状态仓库和锁。 */
     @Bean
     public SandboxLifecycleService sandboxLifecycleService(
-            DockerSandboxClient dockerSandboxClient,
+            SandboxProvider sandboxProvider,
             LocalSnapshotSpec localSnapshotSpec,
             SandboxStateRepository sandboxStateRepository,
-            SandboxServiceProperties properties,
             SandboxOperationLockRegistry sandboxOperationLockRegistry) {
         return new SandboxLifecycleService(
-                dockerSandboxClient,
+                sandboxProvider,
                 localSnapshotSpec,
                 sandboxStateRepository,
-                properties,
                 sandboxOperationLockRegistry);
     }
 
@@ -91,5 +118,47 @@ public class SandboxServiceConfig {
             SandboxFilesystemOperations sandboxFilesystemOperations,
             SandboxServiceProperties properties) {
         return new SandboxFileToolService(sandboxFilesystemOperations, properties);
+    }
+
+    /** 创建同时支持 Docker 与 Kubernetes 状态 JSON 的 ObjectMapper。 */
+    private static ObjectMapper sandboxObjectMapper(ObjectMapper objectMapper) {
+        return objectMapper
+                .copy()
+                .findAndRegisterModules()
+                .registerModule(new HarnessSandboxJacksonModule())
+                .registerModule(new KubernetesHarnessSandboxJacksonModule());
+    }
+
+    /** 把 Spring Boot 配置转换为 Kubernetes 客户端默认参数。 */
+    private static KubernetesSandboxClientOptions kubernetesOptions(
+            SandboxServiceProperties.Kubernetes properties) {
+        KubernetesSandboxClientOptions options = new KubernetesSandboxClientOptions();
+        options.setNamespace(properties.getNamespace());
+        options.setWarmPoolName(properties.getWarmPoolName());
+        options.setWorkspaceRoot(properties.getWorkspaceRoot());
+        options.setFileApiBaseDir(properties.getFileApiBaseDir());
+        options.setApiUrl(properties.getApiUrl());
+        options.setGatewayName(properties.getGatewayName());
+        options.setGatewayNamespace(properties.getGatewayNamespace());
+        options.setGatewayScheme(properties.getGatewayScheme());
+        if (properties.getServerPort() != null) {
+            options.setServerPort(properties.getServerPort());
+        }
+        if (properties.getSandboxReadyTimeoutSeconds() != null) {
+            options.setSandboxReadyTimeoutSeconds(properties.getSandboxReadyTimeoutSeconds());
+        }
+        if (properties.getCleanupTimeoutSeconds() != null) {
+            options.setCleanupTimeoutSeconds(properties.getCleanupTimeoutSeconds());
+        }
+        if (properties.getRequestTimeoutSeconds() != null) {
+            options.setRequestTimeoutSeconds(properties.getRequestTimeoutSeconds());
+        }
+        if (properties.getPerAttemptTimeoutSeconds() != null) {
+            options.setPerAttemptTimeoutSeconds(properties.getPerAttemptTimeoutSeconds());
+        }
+        if (properties.getPortForwardTimeoutSeconds() != null) {
+            options.setPortForwardTimeoutSeconds(properties.getPortForwardTimeoutSeconds());
+        }
+        return options;
     }
 }

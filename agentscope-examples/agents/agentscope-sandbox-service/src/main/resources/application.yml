@@ -2,6 +2,7 @@ server:
   port: 8080
 
 sandbox-service:
+  backend: docker
   state-dir: ${user.home}/.agentscope-sandbox-service/state
   snapshot-dir: ${user.home}/.agentscope-sandbox-service/snapshots
   docker:
@@ -10,5 +11,20 @@ sandbox-service:
     network: none
     memory-size-bytes: 1073741824
     cpu-count: 2
+  kubernetes:
+    namespace: default
+    warm-pool-name: agentscope-sandbox
+    workspace-root: /workspace
+    file-api-base-dir: /workspace
+    api-url:
+    gateway-name:
+    gateway-namespace:
+    gateway-scheme: http
+    server-port: 8888
+    sandbox-ready-timeout-seconds: 180
+    cleanup-timeout-seconds: 30
+    request-timeout-seconds: 180
+    per-attempt-timeout-seconds: 60
+    port-forward-timeout-seconds: 30
   exec:
     default-timeout-seconds: 120

@@ -40,6 +40,7 @@ class FileSandboxStateRepositoryTest {
                 new SandboxRecord(
                         "alice",
                         "conv-1",
+                        SandboxBackendType.DOCKER,
                         SandboxLifecycleStatus.STOPPED,
                         "{\"type\":\"docker\"}",
                         Instant.parse("2026-09-02T10:00:00Z"),
@@ -61,6 +62,7 @@ class FileSandboxStateRepositoryTest {
                 new SandboxRecord(
                         "../alice",
                         "conv/1",
+                        SandboxBackendType.DOCKER,
                         SandboxLifecycleStatus.RUNNING,
                         "{\"type\":\"docker\"}",
                         Instant.parse("2026-09-02T10:00:00Z"),
@@ -80,6 +82,31 @@ class FileSandboxStateRepositoryTest {
                         tempDir, new ObjectMapper().findAndRegisterModules());
 
         assertThat(repository.find(SandboxKey.of("bob", "conv-2"))).isEmpty();
+    }
+
+    /** 验证旧状态文件缺少 backend 字段时按 Docker 兼容读取。 */
+    @Test
+    void readsLegacyRecordWithoutBackendAsDocker() throws Exception {
+        FileSandboxStateRepository repository =
+                new FileSandboxStateRepository(
+                        tempDir, new ObjectMapper().findAndRegisterModules());
+        SandboxKey key = SandboxKey.of("alice", "legacy");
+        Files.createDirectories(tempDir.resolve("YWxpY2U"));
+        Files.writeString(
+                tempDir.resolve("YWxpY2U").resolve("bGVnYWN5.json"),
+                """
+                {
+                  "userId": "alice",
+                  "sessionId": "legacy",
+                  "status": "STOPPED",
+                  "sandboxStateJson": "{\\"type\\":\\"docker\\"}",
+                  "createdAt": "2026-09-02T10:00:00Z",
+                  "updatedAt": "2026-09-02T10:01:00Z"
+                }
+                """);
+
+        assertThat(repository.find(key).orElseThrow().backend())
+                .isEqualTo(SandboxBackendType.DOCKER);
     }
 
     /** 验证空业务键会被拒绝，避免生成不可定位的状态文件。 */

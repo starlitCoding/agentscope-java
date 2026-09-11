@@ -1,20 +1,21 @@
 # AgentScope Sandbox Service
 
-独立 Spring Boot Docker 沙箱服务。调用方只需通过 HTTP API 传入 `userId` 和 `sessionId`，即可创建、启动、停止、关闭 Docker 沙箱，保存和加载快照，并触发沙箱内命令执行和文件工具操作。
+独立 Spring Boot 沙箱服务。调用方只需通过 HTTP API 传入 `userId` 和 `sessionId`，即可创建、启动、停止、关闭沙箱，保存和加载快照，并触发沙箱内命令执行和文件工具操作。
 
-本服务**不**使用 `ReactAgent` / `HarnessAgent`，也不引入模型，只复用 AgentScope Harness 的 Docker 沙箱与文件系统能力。
+本服务**不**使用 `ReactAgent` / `HarnessAgent`，也不引入模型，只复用 AgentScope Harness 的沙箱与文件系统能力。当前默认使用本地 Docker 后端，也可以通过配置切换到 agent-sandbox / Kubernetes 后端。
 
 ## 功能
 
 - 以 `(userId, sessionId)` 作为沙箱隔离键，同一个键可恢复同一份沙箱状态和工作区快照。
-- 支持本地 Docker 沙箱生命周期：创建、启动/恢复、停止并保存快照、关闭并删除容器。
+- 支持通过 `sandbox-service.backend` 选择 `docker` 或 `kubernetes` 沙箱后端。
+- 支持沙箱生命周期：创建、启动/恢复、停止并保存快照、关闭并释放后端资源。
 - 命令执行 API：在沙箱 `/workspace` 中执行任意 shell 命令。
 - 文件工具 API：读、写、编辑、列目录、exists、glob、grep、删除、移动、上传、下载。
 - 使用本地文件保存状态 JSON 与 tar 快照，第一版不引入数据库。
 
 ## 启动
 
-需要本机可访问 Docker（`docker` CLI 在 `PATH` 中），并预先拉取默认镜像：
+默认后端是 Docker。使用默认配置时，需要本机可访问 Docker（`docker` CLI 在 `PATH` 中），并预先拉取默认镜像：
 
 ```bash
 docker pull ubuntu:24.04
@@ -28,12 +29,20 @@ mvn -pl agentscope-examples/agents/agentscope-sandbox-service -am spring-boot:ru
 
 服务默认监听 `8080` 端口。
 
+切换到 Kubernetes 后端时，需要先在集群中安装 agent-sandbox controller、CRD、`SandboxTemplate` 和 `SandboxWarmPool`，并保证当前进程可通过 kubeconfig 或 in-cluster service account 访问 Kubernetes API：
+
+```bash
+mvn -pl agentscope-examples/agents/agentscope-sandbox-service -am spring-boot:run \
+  -Dspring-boot.run.arguments="--sandbox-service.backend=kubernetes --sandbox-service.kubernetes.namespace=agents --sandbox-service.kubernetes.warm-pool-name=agent-pool"
+```
+
 ## 配置
 
 所有配置前缀为 `sandbox-service`，可通过命令行参数或环境变量覆盖：
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
+| `sandbox-service.backend` | `docker` | 沙箱后端，支持 `docker`、`kubernetes` |
 | `sandbox-service.state-dir` | `~/.agentscope-sandbox-service/state` | 本地状态 JSON 根目录 |
 | `sandbox-service.snapshot-dir` | `~/.agentscope-sandbox-service/snapshots` | 本地快照 tar 根目录 |
 | `sandbox-service.docker.image` | `ubuntu:24.04` | Docker 镜像 |
@@ -41,6 +50,16 @@ mvn -pl agentscope-examples/agents/agentscope-sandbox-service -am spring-boot:ru
 | `sandbox-service.docker.network` | `none` | Docker 网络模式（默认断网） |
 | `sandbox-service.docker.memory-size-bytes` | `1073741824` | 容器内存限制（字节） |
 | `sandbox-service.docker.cpu-count` | `2` | 容器 CPU 限制 |
+| `sandbox-service.kubernetes.namespace` | `default` | SandboxClaim 所在命名空间 |
+| `sandbox-service.kubernetes.warm-pool-name` | `agentscope-sandbox` | agent-sandbox WarmPool 名称 |
+| `sandbox-service.kubernetes.workspace-root` | `/workspace` | Kubernetes runtime 工作区根目录 |
+| `sandbox-service.kubernetes.file-api-base-dir` | `/workspace` | runtime 文件 API 基准目录；为空时退回 base64-over-exec |
+| `sandbox-service.kubernetes.api-url` | 空 | 直连 runtime API 地址；配置后优先使用 direct 连接 |
+| `sandbox-service.kubernetes.gateway-name` | 空 | gateway 名称；未配置 `api-url` 时使用 gateway 连接 |
+| `sandbox-service.kubernetes.gateway-namespace` | 空 | gateway 所在命名空间；为空时使用沙箱 namespace |
+| `sandbox-service.kubernetes.gateway-scheme` | `http` | gateway 协议 |
+| `sandbox-service.kubernetes.server-port` | `8888` | runtime 服务端口 |
+| `sandbox-service.kubernetes.*timeout*` | 见 `application.yml` | 创建、请求、端口转发和清理超时 |
 | `sandbox-service.exec.default-timeout-seconds` | `120` | 默认命令超时（秒） |
 | `server.port` | `8080` | 服务端口 |
 
@@ -61,7 +80,7 @@ curl -X POST http://localhost:8080/api/sandboxes/start \
   -d '{"userId":"alice","sessionId":"conv-1"}'
 ```
 
-`POST /api/sandboxes` 是 `start` 的别名。响应中 `status` 为 `RUNNING`，并包含 `containerId`、`containerName`、`workspaceRoot` 等运行信息。
+`POST /api/sandboxes` 是 `start` 的别名。响应中 `status` 为 `RUNNING`，并包含 `backend`、`workspaceRoot` 和 `runtime` 等运行信息。Docker 的 `runtime` 中包含 `containerId`、`containerName`；Kubernetes 的 `runtime` 中包含 `namespace`、`claimName`、`sandboxName`、`warmPoolName`、`podName`、`podIP` 等字段。
 
 ### 执行命令
 
@@ -109,7 +128,7 @@ curl -X POST http://localhost:8080/api/sandboxes/stop \
 
 `stop` 保存快照但保留容器，适合长会话复用。
 
-### 关闭并删除容器
+### 关闭并释放资源
 
 ```bash
 curl -X DELETE http://localhost:8080/api/sandboxes \
@@ -117,7 +136,7 @@ curl -X DELETE http://localhost:8080/api/sandboxes \
   -d '{"userId":"alice","sessionId":"conv-1"}'
 ```
 
-`close` 先保存快照再释放容器；状态 JSON 与快照 tar 保留，下次 `start` 自动从快照恢复工作区。
+`close` 先保存快照再释放后端资源；状态 JSON 与快照 tar 保留，下次 `start` 自动从快照恢复工作区。Docker 后端释放容器，Kubernetes 后端释放由框架拥有的 SandboxClaim。
 
 ### 查询状态
 
@@ -133,6 +152,7 @@ curl "http://localhost:8080/api/sandboxes/status?userId=alice&sessionId=conv-1"
 - 文件路径必须是绝对路径，且限制在配置的 `workspaceRoot` 之下。
 - `userId` / `sessionId` 仅作为业务键，状态文件路径使用 URL-safe Base64 编码，避免路径穿越。
 - 第一版接口未内置鉴权，**生产环境必须放在受控内网或前置鉴权网关之后**。
+- 同一个 `(userId, sessionId)` 的状态不能跨后端恢复。如果某个 session 已保存为 Docker 状态，服务改成 Kubernetes 后再次启动该 session 会返回 `BACKEND_MISMATCH`。
 
 ## 测试
 

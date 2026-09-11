@@ -15,22 +15,8 @@
  */
 package io.agentscope.sandboxservice.service;
 
-import java.time.Instant;
-
-/** 本地状态文件中的业务包装对象，内部保存 Harness 原生 SandboxState JSON。 */
-public record SandboxRecord(
-        String userId,
-        String sessionId,
-        SandboxBackendType backend,
-        SandboxLifecycleStatus status,
-        String sandboxStateJson,
-        Instant createdAt,
-        Instant updatedAt) {
-
-    /** 兼容旧状态文件没有 backend 字段的情况，默认按 Docker 后端恢复。 */
-    public SandboxRecord {
-        if (backend == null) {
-            backend = SandboxBackendType.DOCKER;
-        }
-    }
+/** 标识 sandbox-service 当前使用的沙箱后端类型。 */
+public enum SandboxBackendType {
+    DOCKER,
+    KUBERNETES
 }

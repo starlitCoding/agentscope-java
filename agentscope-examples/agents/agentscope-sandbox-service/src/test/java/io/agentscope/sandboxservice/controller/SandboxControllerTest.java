@@ -24,10 +24,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import io.agentscope.sandboxservice.dto.SandboxExecResponse;
 import io.agentscope.sandboxservice.dto.SandboxStatusResponse;
+import io.agentscope.sandboxservice.service.SandboxBackendType;
 import io.agentscope.sandboxservice.service.SandboxKey;
 import io.agentscope.sandboxservice.service.SandboxLifecycleService;
 import io.agentscope.sandboxservice.service.SandboxLifecycleStatus;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,12 +54,12 @@ class SandboxControllerTest {
                         new SandboxStatusResponse(
                                 "alice",
                                 "conv-1",
+                                SandboxBackendType.DOCKER,
                                 SandboxLifecycleStatus.RUNNING,
                                 true,
-                                "container-1",
-                                "sandbox-1",
                                 false,
                                 "/workspace",
+                                Map.of("containerId", "container-1", "containerName", "sandbox-1"),
                                 Instant.parse("2026-09-02T10:00:00Z"),
                                 Instant.parse("2026-09-02T10:01:00Z")));
 
@@ -67,7 +69,8 @@ class SandboxControllerTest {
                                 .content("{\"userId\":\"alice\",\"sessionId\":\"conv-1\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("RUNNING"))
-                .andExpect(jsonPath("$.containerId").value("container-1"));
+                .andExpect(jsonPath("$.backend").value("DOCKER"))
+                .andExpect(jsonPath("$.runtime.containerId").value("container-1"));
     }
 
     /** 验证 status API 查询沙箱状态。 */
@@ -79,12 +82,16 @@ class SandboxControllerTest {
                                 new SandboxStatusResponse(
                                         "alice",
                                         "conv-1",
+                                        SandboxBackendType.DOCKER,
                                         SandboxLifecycleStatus.RUNNING,
                                         true,
-                                        "container-1",
-                                        "sandbox-1",
                                         false,
                                         "/workspace",
+                                        Map.of(
+                                                "containerId",
+                                                "container-1",
+                                                "containerName",
+                                                "sandbox-1"),
                                         Instant.parse("2026-09-02T10:00:00Z"),
                                         Instant.parse("2026-09-02T10:01:00Z"))));
 
@@ -104,12 +111,12 @@ class SandboxControllerTest {
                         new SandboxStatusResponse(
                                 "alice",
                                 "conv-1",
+                                SandboxBackendType.DOCKER,
                                 SandboxLifecycleStatus.STOPPED,
                                 false,
-                                "container-1",
-                                "sandbox-1",
                                 true,
                                 "/workspace",
+                                Map.of("containerId", "container-1", "containerName", "sandbox-1"),
                                 Instant.parse("2026-09-02T10:00:00Z"),
                                 Instant.parse("2026-09-02T10:02:00Z")));
 
@@ -129,12 +136,12 @@ class SandboxControllerTest {
                         new SandboxStatusResponse(
                                 "alice",
                                 "conv-1",
+                                SandboxBackendType.DOCKER,
                                 SandboxLifecycleStatus.CLOSED,
                                 false,
-                                null,
-                                null,
                                 true,
                                 "/workspace",
+                                Map.of(),
                                 Instant.parse("2026-09-02T10:00:00Z"),
                                 Instant.parse("2026-09-02T10:03:00Z")));
 

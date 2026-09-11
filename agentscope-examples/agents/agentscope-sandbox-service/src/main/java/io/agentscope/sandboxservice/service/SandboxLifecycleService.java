@@ -19,13 +19,8 @@ import io.agentscope.harness.agent.sandbox.ExecResult;
 import io.agentscope.harness.agent.sandbox.Sandbox;
 import io.agentscope.harness.agent.sandbox.SandboxException;
 import io.agentscope.harness.agent.sandbox.SandboxState;
-import io.agentscope.harness.agent.sandbox.WorkspaceSpec;
-import io.agentscope.harness.agent.sandbox.impl.docker.DockerSandboxClient;
-import io.agentscope.harness.agent.sandbox.impl.docker.DockerSandboxClientOptions;
-import io.agentscope.harness.agent.sandbox.impl.docker.DockerSandboxState;
 import io.agentscope.harness.agent.sandbox.snapshot.SandboxSnapshot;
 import io.agentscope.harness.agent.sandbox.snapshot.SandboxSnapshotSpec;
-import io.agentscope.sandboxservice.config.SandboxServiceProperties;
 import io.agentscope.sandboxservice.dto.SandboxExecResponse;
 import io.agentscope.sandboxservice.dto.SandboxStatusResponse;
 import io.agentscope.sandboxservice.error.SandboxServiceException;
@@ -37,24 +32,21 @@ import java.util.concurrent.ConcurrentHashMap;
 /** 沙箱生命周期与命令执行核心服务，按 (userId, sessionId) 串行化操作并缓存运行态。 */
 public class SandboxLifecycleService {
 
-    private final DockerSandboxClient client;
+    private final SandboxProvider provider;
     private final SandboxSnapshotSpec snapshotSpec;
     private final SandboxStateRepository repository;
-    private final SandboxServiceProperties properties;
     private final SandboxOperationLockRegistry lockRegistry;
     private final Map<SandboxKey, SandboxRuntime> runtimes = new ConcurrentHashMap<>();
 
-    /** 创建生命周期服务，依赖 Docker 客户端、快照策略、状态仓库和锁注册表。 */
+    /** 创建生命周期服务，依赖沙箱后端、快照策略、状态仓库和锁注册表。 */
     public SandboxLifecycleService(
-            DockerSandboxClient client,
+            SandboxProvider provider,
             SandboxSnapshotSpec snapshotSpec,
             SandboxStateRepository repository,
-            SandboxServiceProperties properties,
             SandboxOperationLockRegistry lockRegistry) {
-        this.client = client;
+        this.provider = provider;
         this.snapshotSpec = snapshotSpec;
         this.repository = repository;
-        this.properties = properties;
         this.lockRegistry = lockRegistry;
     }
 
@@ -112,10 +104,11 @@ public class SandboxLifecycleService {
         }
 
         Optional<SandboxRecord> record = repository.find(key);
+        record.ifPresent(value -> validateBackend(key, value));
         Instant createdAt = record.map(SandboxRecord::createdAt).orElse(Instant.now());
         Sandbox sandbox;
         if (record.isPresent() && notBlank(record.get().sandboxStateJson())) {
-            sandbox = client.resume(client.deserializeState(record.get().sandboxStateJson()));
+            sandbox = provider.resume(record.get().sandboxStateJson(), snapshotSpec);
         } else {
             sandbox = createSandbox(key);
         }
@@ -149,6 +142,7 @@ public class SandboxLifecycleService {
         }
         SandboxRecord record =
                 repository.find(key).orElseThrow(() -> SandboxServiceException.notFound(key));
+        validateBackend(key, record);
         return toStatus(key, null, record);
     }
 
@@ -156,10 +150,11 @@ public class SandboxLifecycleService {
     private SandboxStatusResponse doClose(SandboxKey key) {
         SandboxRuntime runtime = runtimes.get(key);
         SandboxRecord record = repository.find(key).orElse(null);
+        validateBackend(key, record);
         Instant createdAt = record != null ? record.createdAt() : Instant.now();
         Sandbox sandbox = runtime != null ? runtime.sandbox() : null;
         if (sandbox == null && record != null && notBlank(record.sandboxStateJson())) {
-            sandbox = client.resume(client.deserializeState(record.sandboxStateJson()));
+            sandbox = provider.resume(record.sandboxStateJson(), snapshotSpec);
         }
         if (sandbox != null) {
             try {
@@ -176,6 +171,7 @@ public class SandboxLifecycleService {
                     new SandboxRecord(
                             record.userId(),
                             record.sessionId(),
+                            record.backend(),
                             SandboxLifecycleStatus.CLOSED,
                             record.sandboxStateJson(),
                             record.createdAt(),
@@ -228,18 +224,10 @@ public class SandboxLifecycleService {
         return runtimes.get(key);
     }
 
-    /** 使用配置参数创建新的 Docker 沙箱。 */
+    /** 使用当前后端配置创建新的沙箱。 */
     private Sandbox createSandbox(SandboxKey key) {
-        WorkspaceSpec workspaceSpec = new WorkspaceSpec();
-        workspaceSpec.setRoot(properties.getDocker().getWorkspaceRoot());
-        DockerSandboxClientOptions options = new DockerSandboxClientOptions();
-        options.setImage(properties.getDocker().getImage());
-        options.setWorkspaceRoot(properties.getDocker().getWorkspaceRoot());
-        options.setNetwork(properties.getDocker().getNetwork());
-        options.setMemorySizeBytes(properties.getDocker().getMemorySizeBytes());
-        options.setCpuCount(properties.getDocker().getCpuCount());
         try {
-            return client.create(workspaceSpec, snapshotSpec, options);
+            return provider.create(key, snapshotSpec);
         } catch (Exception e) {
             throw SandboxServiceException.startFailed(key, e);
         }
@@ -248,28 +236,29 @@ public class SandboxLifecycleService {
     /** 把沙箱当前状态序列化后包装为状态记录。 */
     private SandboxRecord toRecord(
             SandboxKey key, SandboxLifecycleStatus status, Sandbox sandbox, Instant createdAt) {
-        String stateJson = client.serializeState(sandbox.getState());
+        String stateJson = provider.serializeState(sandbox);
         return new SandboxRecord(
-                key.userId(), key.sessionId(), status, stateJson, createdAt, Instant.now());
+                key.userId(),
+                key.sessionId(),
+                provider.backend(),
+                status,
+                stateJson,
+                createdAt,
+                Instant.now());
     }
 
-    /** 组装状态响应，尽量从运行态沙箱读取容器信息和快照可恢复性。 */
+    /** 组装状态响应，尽量从运行态沙箱读取后端运行信息和快照可恢复性。 */
     private SandboxStatusResponse toStatus(
             SandboxKey key, SandboxRuntime runtime, SandboxRecord record) {
         boolean running = runtime != null && runtime.sandbox().isRunning();
-        String containerId = null;
-        String containerName = null;
-        String workspaceRoot = properties.getDocker().getWorkspaceRoot();
+        SandboxRuntimeDescriptor descriptor =
+                runtime != null
+                        ? provider.describe(runtime.sandbox())
+                        : new SandboxRuntimeDescriptor(
+                                provider.backend(), provider.workspaceRoot(), Map.of());
         boolean snapshotRestorable = false;
         if (runtime != null) {
             SandboxState state = runtime.sandbox().getState();
-            if (state instanceof DockerSandboxState dockerState) {
-                containerId = dockerState.getContainerId();
-                containerName = dockerState.getContainerName();
-                if (dockerState.getWorkspaceRoot() != null) {
-                    workspaceRoot = dockerState.getWorkspaceRoot();
-                }
-            }
             SandboxSnapshot snapshot = state.getSnapshot();
             if (snapshot != null) {
                 try {
@@ -288,14 +277,22 @@ public class SandboxLifecycleService {
         return new SandboxStatusResponse(
                 key.userId(),
                 key.sessionId(),
+                record != null ? record.backend() : descriptor.backend(),
                 status,
                 running,
-                containerId,
-                containerName,
                 snapshotRestorable,
-                workspaceRoot,
+                descriptor.workspaceRoot(),
+                descriptor.attributes(),
                 record != null ? record.createdAt() : null,
                 record != null ? record.updatedAt() : null);
+    }
+
+    /** 校验持久化状态的后端类型与当前 provider 一致，避免跨后端恢复。 */
+    private void validateBackend(SandboxKey key, SandboxRecord record) {
+        if (record != null && record.backend() != provider.backend()) {
+            throw SandboxServiceException.backendMismatch(
+                    key, record.backend(), provider.backend());
+        }
     }
 
     /** 判断字符串非空，用于区分可恢复状态与无状态场景。 */

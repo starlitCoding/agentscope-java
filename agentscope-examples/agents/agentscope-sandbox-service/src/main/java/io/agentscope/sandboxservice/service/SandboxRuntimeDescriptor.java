@@ -15,22 +15,14 @@
  */
 package io.agentscope.sandboxservice.service;
 
-import java.time.Instant;
+import java.util.Map;
 
-/** 本地状态文件中的业务包装对象，内部保存 Harness 原生 SandboxState JSON。 */
-public record SandboxRecord(
-        String userId,
-        String sessionId,
-        SandboxBackendType backend,
-        SandboxLifecycleStatus status,
-        String sandboxStateJson,
-        Instant createdAt,
-        Instant updatedAt) {
+/** 描述一个运行中沙箱的通用信息和后端特定属性。 */
+public record SandboxRuntimeDescriptor(
+        SandboxBackendType backend, String workspaceRoot, Map<String, Object> attributes) {
 
-    /** 兼容旧状态文件没有 backend 字段的情况，默认按 Docker 后端恢复。 */
-    public SandboxRecord {
-        if (backend == null) {
-            backend = SandboxBackendType.DOCKER;
-        }
+    /** 创建描述对象时复制属性表，避免调用方修改内部状态。 */
+    public SandboxRuntimeDescriptor {
+        attributes = attributes == null ? Map.of() : Map.copyOf(attributes);
     }
 }

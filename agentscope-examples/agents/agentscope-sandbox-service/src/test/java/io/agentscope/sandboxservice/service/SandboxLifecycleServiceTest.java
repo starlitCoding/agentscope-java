@@ -16,6 +16,7 @@
 package io.agentscope.sandboxservice.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.harness.agent.sandbox.ExecResult;
@@ -30,9 +31,11 @@ import io.agentscope.harness.agent.sandbox.snapshot.SandboxSnapshotSpec;
 import io.agentscope.sandboxservice.config.SandboxServiceProperties;
 import io.agentscope.sandboxservice.dto.SandboxExecResponse;
 import io.agentscope.sandboxservice.dto.SandboxStatusResponse;
+import io.agentscope.sandboxservice.error.SandboxServiceException;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -64,6 +67,7 @@ class SandboxLifecycleServiceTest {
                         new SandboxRecord(
                                 "alice",
                                 "conv-1",
+                                SandboxBackendType.DOCKER,
                                 SandboxLifecycleStatus.STOPPED,
                                 "state-json",
                                 Instant.now(),
@@ -126,14 +130,39 @@ class SandboxLifecycleServiceTest {
         assertThat(response.stdout()).isEqualTo("echo hi");
     }
 
+    /** 验证已有状态后端和当前 provider 不一致时拒绝恢复。 */
+    @Test
+    void rejectsBackendMismatchWhenRecordExists() {
+        InMemoryRepository repository = new InMemoryRepository();
+        repository.record =
+                Optional.of(
+                        new SandboxRecord(
+                                "alice",
+                                "conv-1",
+                                SandboxBackendType.DOCKER,
+                                SandboxLifecycleStatus.STOPPED,
+                                "state-json",
+                                Instant.now(),
+                                Instant.now()));
+        SandboxLifecycleService service =
+                new SandboxLifecycleService(
+                        new FakeProvider(SandboxBackendType.KUBERNETES),
+                        new NoopSnapshotSpec(),
+                        repository,
+                        new SandboxOperationLockRegistry());
+
+        assertThatThrownBy(() -> service.start(SandboxKey.of("alice", "conv-1")))
+                .isInstanceOf(SandboxServiceException.class)
+                .hasMessageContaining("backend mismatch");
+    }
+
     private SandboxLifecycleService newService(
             InMemoryRepository repository, FakeDockerSandboxClient client) {
         SandboxServiceProperties properties = new SandboxServiceProperties();
         return new SandboxLifecycleService(
-                client,
+                new DockerSandboxProvider(client, properties.getDocker()),
                 new NoopSnapshotSpec(),
                 repository,
-                properties,
                 new SandboxOperationLockRegistry());
     }
 
@@ -184,6 +213,10 @@ class SandboxLifecycleServiceTest {
             state.setImage("ubuntu:24.04");
             return state;
         }
+
+        public SandboxState deserializeState(String json, SandboxSnapshotSpec snapshotSpec) {
+            return deserializeState(json);
+        }
     }
 
     static class FakeSandbox implements Sandbox {
@@ -227,5 +260,33 @@ class SandboxLifecycleServiceTest {
         }
 
         public void hydrateWorkspace(InputStream archive) {}
+    }
+
+    record FakeProvider(SandboxBackendType backend) implements SandboxProvider {
+
+        /** 创建测试沙箱。 */
+        public Sandbox create(SandboxKey key, SandboxSnapshotSpec snapshotSpec) {
+            return new FakeSandbox();
+        }
+
+        /** 恢复测试沙箱。 */
+        public Sandbox resume(String sandboxStateJson, SandboxSnapshotSpec snapshotSpec) {
+            return new FakeSandbox();
+        }
+
+        /** 返回固定测试状态 JSON。 */
+        public String serializeState(Sandbox sandbox) {
+            return "state-json";
+        }
+
+        /** 返回测试工作目录。 */
+        public String workspaceRoot() {
+            return "/workspace";
+        }
+
+        /** 返回测试运行态描述。 */
+        public SandboxRuntimeDescriptor describe(Sandbox sandbox) {
+            return new SandboxRuntimeDescriptor(backend, "/workspace", Map.of());
+        }
     }
 }
