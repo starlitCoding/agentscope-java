@@ -2,7 +2,7 @@ server:
   port: 8080
 
 sandbox-service:
-  backend: docker
+  backend: kubernetes
   state-dir: ${user.home}/.agentscope-sandbox-service/state
   snapshot-dir: ${user.home}/.agentscope-sandbox-service/snapshots
   docker:
@@ -12,7 +12,7 @@ sandbox-service:
     memory-size-bytes: 1073741824
     cpu-count: 2
   kubernetes:
-    namespace: default
+    namespace: agentscope-sandbox
     warm-pool-name: agentscope-sandbox
     workspace-root: /workspace
     file-api-base-dir: /workspace

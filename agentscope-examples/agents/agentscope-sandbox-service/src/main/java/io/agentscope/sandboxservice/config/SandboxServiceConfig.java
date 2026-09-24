@@ -44,16 +44,15 @@ public class SandboxServiceConfig {
 
     /** 创建 Docker 沙箱客户端。 */
     @Bean
-    public DockerSandboxClient dockerSandboxClient(ObjectMapper objectMapper) {
-        return new DockerSandboxClient(sandboxObjectMapper(objectMapper));
+    public DockerSandboxClient dockerSandboxClient() {
+        return new DockerSandboxClient(sandboxObjectMapper());
     }
 
     /** 创建 Kubernetes 沙箱客户端，默认参数承载超时等全局配置。 */
     @Bean
-    public KubernetesSandboxClient kubernetesSandboxClient(
-            SandboxServiceProperties properties, ObjectMapper objectMapper) {
+    public KubernetesSandboxClient kubernetesSandboxClient(SandboxServiceProperties properties) {
         return new KubernetesSandboxClient(
-                kubernetesOptions(properties.getKubernetes()), sandboxObjectMapper(objectMapper));
+                kubernetesOptions(properties.getKubernetes()), sandboxObjectMapper());
     }
 
     /** 根据配置选择实际沙箱后端。 */
@@ -79,10 +78,8 @@ public class SandboxServiceConfig {
 
     /** 创建本地状态仓库，并确保状态目录存在。 */
     @Bean
-    public SandboxStateRepository sandboxStateRepository(
-            SandboxServiceProperties properties, ObjectMapper objectMapper) {
-        return new FileSandboxStateRepository(
-                properties.getStateDir(), objectMapper.copy().findAndRegisterModules());
+    public SandboxStateRepository sandboxStateRepository(SandboxServiceProperties properties) {
+        return new FileSandboxStateRepository(properties.getStateDir(), sandboxObjectMapper());
     }
 
     /** 创建按业务键串行化操作互斥锁的注册表。 */
@@ -121,9 +118,8 @@ public class SandboxServiceConfig {
     }
 
     /** 创建同时支持 Docker 与 Kubernetes 状态 JSON 的 ObjectMapper。 */
-    private static ObjectMapper sandboxObjectMapper(ObjectMapper objectMapper) {
-        return objectMapper
-                .copy()
+    private static ObjectMapper sandboxObjectMapper() {
+        return new ObjectMapper()
                 .findAndRegisterModules()
                 .registerModule(new HarnessSandboxJacksonModule())
                 .registerModule(new KubernetesHarnessSandboxJacksonModule());
